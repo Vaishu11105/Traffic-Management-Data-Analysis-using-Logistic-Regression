@@ -1,0 +1,99 @@
+# --- 1. Setup and Imports  ---
+from pyspark.sql import SparkSession
+from pyspark.ml.feature import VectorAssembler, StringIndexer
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+import os # Imported for file saving operations later
+
+# Initialize Spark Session
+# Using a specific appName as seen in the image's setup
+spark = SparkSession.builder.appName("Traffic_Management_Logistic").getOrCreate()
+
+# --- 2. Data Loading and Inspection  ---
+# NOTE: The path in the original image is specific to a user's system.
+# Replace the path with the actual location of your Traffic.csv file if running this code.
+data = spark.read.csv("C:/Users/vaish/Downloads/Traffic.csv", header=True, inferSchema=True)
+
+# Display schema 
+# data.printSchema()
+
+# Display first 5 rows 
+# data.show(5)
+
+# --- 3. Data Cleaning and Preparation  ---
+# Drop specified columns
+data = data.drop("Time", "Day of the week")
+print(f"Cleaned data rows: {data.count()}")
+
+# Convert the categorical target column "Traffic Situation" into a numerical "label" column
+indexer = StringIndexer(inputCol="Traffic Situation", outputCol="label")
+data = indexer.fit(data).transform(data)
+
+# Display mapping (Optional, for verification)
+# data.select("Traffic Situation", "label").show(10)
+
+# Define feature columns for VectorAssembler
+# NOTE: 'Date' is likely included but may require further transformation if it's used as a numerical feature.
+# Assuming 'Date' is treated numerically or is a simple integer count.
+feature_columns = ['Date', 'CarCount', 'BikeCount', 'BusCount', 'TruckCount', 'Total']
+
+# Combine feature columns into a single vector column named "features"
+assembler = VectorAssembler(inputCols=feature_columns, outputCol="features")
+data_prepared = assembler.transform(data)
+
+# --- 4. Split Data  ---
+# Split the data into training (70%) and testing (30%) sets
+train, test = data_prepared.randomSplit([0.7, 0.3], seed=42)
+
+# --- 5. Model Training ---
+# Initialize the Logistic Regression model
+# maxIter=20 is specified in the image
+lr = LogisticRegression(featuresCol="features", labelCol="label", maxIter=20)
+
+# Train the model
+lr_fit = lr.fit(train)
+
+# Generate predictions on the test set
+predictions = lr_fit.transform(test)
+
+# Display sample predictions 
+# predictions.select("Traffic Situation", "prediction", "probability").show(10)
+
+# --- 6. Model Evaluation  ---
+# Initialize evaluators
+evaluator_acc = MulticlassClassificationEvaluator(labelCol="label", metricName="accuracy")
+evaluator_prec = MulticlassClassificationEvaluator(labelCol="label", metricName="weightedPrecision")
+evaluator_rec = MulticlassClassificationEvaluator(labelCol="label", metricName="weightedRecall")
+evaluator_f1 = MulticlassClassificationEvaluator(labelCol="label", metricName="f1")
+
+# Evaluate metrics
+accuracy = evaluator_acc.evaluate(predictions)
+precision = evaluator_prec.evaluate(predictions)
+recall = evaluator_rec.evaluate(predictions)
+f1 = evaluator_f1.evaluate(predictions)
+
+# Print Model Evaluation Metrics
+print("\nModel Evaluation Metrics:")
+print(f"Accuracy : {accuracy:.2f}")
+print(f"Precision : {precision:.2f}")
+print(f"Recall : {recall:.2f}")
+print(f"F1 Score : {f1:.2f}")
+
+# --- 7. Save Predictions and Count  ---
+# Save the final predictions to a CSV file 
+folder_path = r"C:\Users\vaish\Desktop\traffic_project" # Use the specific path from the image
+file_path = os.path.join(folder_path, "cluster_project.csv")
+
+# Create the directory if it doesn't exist 
+os.makedirs(folder_path, exist_ok=True)
+
+# Save the selected prediction columns to the specified CSV file
+predictions.select("Traffic Situation", "prediction", "probability").toPandas().to_csv(file_path, index=False)
+print(f"\nPredictions saved as '{file_path}'")
+
+# Count and display the number of predictions for each class 
+print("\nPrediction Distribution:")
+predictions.groupBy("prediction").count().show()
+
+# Stop the Spark session
+spark.stop()
